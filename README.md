@@ -2,7 +2,7 @@
 
 **Min Wu, Haoze Wu, Clark Barrett.**
 
-The accompanying paper [VeriX: towards Verified eXplainability of deep neural networks](https://openreview.net/pdf?id=E2TJI6CKm0) is accepted by NeurIPS 2023.
+The accompanying paper [VeriX: towards Verified eXplainability of deep neural networks](https://proceedings.neurips.cc/paper_files/paper/2023/file/46907c2ff9fafd618095161d76461842-Paper-Conference.pdf) is accepted by NeurIPS 2023.
 
 #### Citation
 ```
