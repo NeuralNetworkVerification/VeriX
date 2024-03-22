@@ -7,10 +7,15 @@ The accompanying paper [VeriX: towards Verified eXplainability of deep neural ne
 #### Citation
 ```
 @inproceedings{VeriX,
-  title   = {VeriX: Towards Verified Explainability of Deep Neural Networks},
-  author  = {Wu, Min and Wu, Haoze and Barrett, Clark},
-  booktitle = {Advances in Neural Information Processing Systems},
-  year    = {2023}
+ author = {Wu, Min and Wu, Haoze and Barrett, Clark},
+ booktitle = {Advances in Neural Information Processing Systems},
+ editor = {A. Oh and T. Neumann and A. Globerson and K. Saenko and M. Hardt and S. Levine},
+ pages = {22247--22268},
+ publisher = {Curran Associates, Inc.},
+ title = {VeriX: Towards Verified Explainability of Deep Neural Networks},
+ url = {https://proceedings.neurips.cc/paper_files/paper/2023/file/46907c2ff9fafd618095161d76461842-Paper-Conference.pdf},
+ volume = {36},
+ year = {2023}
 }
 ```
 

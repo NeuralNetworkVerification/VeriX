@@ -87,7 +87,7 @@ class VeriX:
         :return: an updated inputVars that contains the traversal order.
         """
         self.traverse = traverse
-        if self.traverse is "heuristic":
+        if self.traverse == "heuristic":
             width, height, channel = self.image.shape[0], self.image.shape[1], self.image.shape[2]
             temp = self.image.reshape(width * height, channel)
             image_batch = np.kron(np.ones(shape=(width * height, 1, 1), dtype=temp.dtype), temp)
@@ -96,9 +96,9 @@ class VeriX:
                 """
                 Different ways to compute sensitivity: use pixel reversal for MNIST and deletion for GTSRB.
                 """
-                if self.dataset is "MNIST":
+                if self.dataset == "MNIST":
                     image_batch_manip[i][i][:] = 1 - image_batch_manip[i][i][:]
-                elif self.dataset is "GTSRB":
+                elif self.dataset == "GTSRB":
                     image_batch_manip[i][i][:] = 0
                 else:
                     print("Dataset not supported: try 'MNIST' or 'GTSRB'.")
@@ -115,7 +115,7 @@ class VeriX:
             self.sensitivity = features.reshape(width, height)
             if plot_sensitivity:
                 save_figure(image=self.sensitivity, path=f'{self.dataset}-sensitivity-{self.traverse}.png')
-        elif self.traverse is "random":
+        elif self.traverse == "random":
             random.seed(seed)
             random.shuffle(self.inputVars)
         else:
