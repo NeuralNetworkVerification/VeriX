@@ -35,7 +35,7 @@ class VeriX:
     sat_set = None
     timeout_set = None
     """
-    Marabou options: 'timeoutInSeconds' is the timeout parameter. 
+    Marabou options: 'timeoutInSeconds' is the timeout parameter.
     """
     options = Marabou.createOptions(
         numWorkers=16,
@@ -80,7 +80,7 @@ class VeriX:
         """
         Load the onnx model into Marabou.
         Note: to ensure sound and complete analysis, load the model before the softmax activation function;
-        if the model is trained from logits directly, then load the whole model. 
+        if the model is trained from logits directly, then load the whole model.
         """
         if self.onnx_model.graph.node[-1].op_type == "Softmax":
             mara_model_output = self.onnx_model.graph.node[-1].input
@@ -232,8 +232,8 @@ class VeriX:
             """
             self.mara_model.clearProperty()
             """
-            If unsat, put the pixel into the irrelevant set; 
-            if timeout, into the timeout set; 
+            If unsat, put the pixel into the irrelevant set;
+            if timeout, into the timeout set;
             if sat, into the explanation.
             """
             if exit_code == 'unsat':
