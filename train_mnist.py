@@ -1,0 +1,59 @@
+"""
+A script to train the MNIST model used by mnist.py.
+
+Run `python train_mnist.py` to train the model, export it to ONNX for onnxruntime + Marabou,
+and simplify the ONNX graph so that Marabou is more likely to support all its operations.
+Note: to obtain sound and complete explanations, train the model from logits directly.
+"""
+from keras.models import Sequential
+from keras.layers import Dense, Flatten
+from keras.utils import to_categorical
+from keras.datasets import mnist
+from keras.losses import CategoricalCrossentropy
+from keras.optimizers import Adam
+import tf2onnx
+import onnx
+from onnxsim import simplify
+
+"""
+download and process MNIST data.
+"""
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+x_train = x_train.reshape(x_train.shape[0], 28, 28, 1)
+x_test = x_test.reshape(x_test.shape[0], 28, 28, 1)
+y_train = to_categorical(y_train, 10)
+y_test = to_categorical(y_test, 10)
+x_train = x_train.astype('float32') / 255
+x_test = x_test.astype('float32') / 255
+
+"""
+train your own MNIST model.
+"""
+model_name = 'mnist-10x2'
+model = Sequential(name=model_name)
+model.add(Flatten(input_shape=(28, 28, 1)))
+model.add(Dense(10, activation='relu'))
+model.add(Dense(10, activation='relu'))
+model.add(Dense(10))
+model.summary()
+model.compile(loss=CategoricalCrossentropy(from_logits=True),
+              optimizer=Adam(learning_rate=0.001),
+              metrics=['accuracy'])
+model.fit(x_train, y_train,
+          batch_size=128,
+          epochs=20,
+          verbose=1,
+          validation_data=(x_test, y_test))
+score = model.evaluate(x_test, y_test, verbose=0)
+print("Test loss:", score[0])
+print("Test accuracy:", score[1])
+# model.save('models/' + model_name + '.h5')
+onnx_path = 'models/' + model_name + '.onnx'
+model_proto, _ = tf2onnx.convert.from_keras(model, output_path=onnx_path)
+
+"""
+simplify the onnx model, so that Marabou is more likely to support all its operations.
+"""
+onnx_model, check = simplify(onnx.load(onnx_path))
+assert check, "onnx-simplifier could not validate the simplified model"
+onnx.save(onnx_model, onnx_path)
