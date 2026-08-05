@@ -6,7 +6,6 @@ import onnxruntime as ort
 from skimage.color import label2rgb
 from matplotlib import pyplot as plt
 import sys
-
 sys.path.insert(0, "Marabou")
 """
 After installing Marabou, load it from maraboupy.
