@@ -1,11 +1,13 @@
+import os
 import random
 import numpy as np
 import onnx
 import onnxruntime as ort
 from skimage.color import label2rgb
 from matplotlib import pyplot as plt
-# import sys
-# sys.path.insert(0, "Marabou")
+import sys
+
+sys.path.insert(0, "Marabou")
 """
 After installing Marabou, load it from maraboupy.
 """
@@ -14,10 +16,14 @@ from maraboupy import Marabou
 
 class VeriX:
     """
-    This is the VeriX class to take in an image and a neural network, and then output an explanation.
+    This is the VeriX class to take in an image and a neural network, and then output an
+    optimal robust explanation: a minimal set of pixels such that, when they are fixed, the
+    prediction is invariant to any epsilon-perturbation on the remaining irrelevant pixels.
+    Each pixel in the explanation also comes with a counterfactual that changes the prediction.
     """
     image = None
-    keras_model = None
+    labels = None
+    directory = ""
     mara_model = None
     traverse: str
     sensitivity = None
@@ -25,29 +31,44 @@ class VeriX:
     label: int
     inputVars = None
     outputVars = None
-    epsilon: float
+    unsat_set = None
+    sat_set = None
+    timeout_set = None
     """
     Marabou options: 'timeoutInSeconds' is the timeout parameter. 
     """
-    options = Marabou.createOptions(numWorkers=16,
-                                    timeoutInSeconds=300,
-                                    verbosity=0,
-                                    solveWithMILP=True)
+    options = Marabou.createOptions(
+        numWorkers=16,
+        timeoutInSeconds=300,
+        verbosity=0,
+        solveWithMILP=True,
+    )
 
-    def __init__(self,
-                 dataset,
-                 image,
-                 model_path,
-                 plot_original=True):
+    def __init__(
+            self,
+            dataset,
+            image,
+            model_path,
+            plot_original=True,
+            labels=None,
+            directory="",
+    ):
         """
         To initialize the VeriX class.
         :param dataset: 'MNIST' or 'GTSRB'.
         :param image: an image array of shape (width, height, channel).
         :param model_path: the path to the neural network.
         :param plot_original: if True, then plot the original image.
+        :param labels: optional list mapping a class index to a readable name (for the figure name).
+        :param directory: the folder to save the figures in; created if needed,
+                          and the working directory by default.
         """
         self.dataset = dataset
         self.image = image
+        self.labels = labels
+        self.directory = directory
+        if self.directory:
+            os.makedirs(self.directory, exist_ok=True)
         """
         Load the onnx model.
         """
@@ -61,7 +82,6 @@ class VeriX:
         Note: to ensure sound and complete analysis, load the model before the softmax activation function;
         if the model is trained from logits directly, then load the whole model. 
         """
-        self.mara_model = Marabou.read_onnx(model_path)
         if self.onnx_model.graph.node[-1].op_type == "Softmax":
             mara_model_output = self.onnx_model.graph.node[-1].input
         else:
@@ -71,20 +91,23 @@ class VeriX:
         self.inputVars = np.arange(image.shape[0] * image.shape[1])
         self.outputVars = self.mara_model.outputVars[0].flatten()
         if plot_original:
-            save_figure(image=image,
-                        path=f"original-predicted-as-{self.label}.png",
-                        cmap="gray" if self.dataset == 'MNIST' else None)
+            self.plot_original()
 
-    def traversal_order(self,
-                        traverse="heuristic",
-                        plot_sensitivity=True,
-                        seed=0):
+    def traversal_order(
+            self,
+            traverse="heuristic",
+            plot_sensitivity=True,
+            seed=42,
+    ):
         """
-        To compute the traversal order of checking all the pixels in the image.
+        To compute the traversal order in which the pixels are checked.
+        If 'heuristic', rank the pixels by feature-level sensitivity: transform each pixel
+        (reversal for MNIST, deletion for GTSRB) and measure the resulting change in the
+        model's confidence in the predicted label, then traverse from least to most sensitive.
         :param traverse: 'heuristic' (by default) or 'random'.
         :param plot_sensitivity: if True, plot the sensitivity map.
         :param seed: if traverse by 'random', then set a random seed.
-        :return: an updated inputVars that contains the traversal order.
+        :return: None; self.inputVars is updated in place to contain the traversal order.
         """
         self.traverse = traverse
         if self.traverse == "heuristic":
@@ -114,25 +137,34 @@ class VeriX:
             self.inputVars = sorted_index
             self.sensitivity = features.reshape(width, height)
             if plot_sensitivity:
-                save_figure(image=self.sensitivity, path=f'{self.dataset}-sensitivity-{self.traverse}.png')
+                save_figure(image=self.sensitivity,
+                            path=os.path.join(self.directory, f'sensitivity-{self.traverse}.png'))
         elif self.traverse == "random":
             random.seed(seed)
             random.shuffle(self.inputVars)
         else:
             print("Traversal not supported: try 'heuristic' or 'random'.")
 
-    def get_explanation(self,
-                        epsilon,
-                        plot_explanation=True,
-                        plot_counterfactual=False,
-                        plot_timeout=False):
+    def get_explanation(
+            self,
+            epsilon,
+            plot_explanation=True,
+            plot_counterfactual=False,
+            plot_timeout=False,
+    ):
         """
-        To compute the explanation for the model and the neural network.
+        To compute the optimal robust explanation of the image for the neural network.
+        Traverse the pixels in self.inputVars and, for each pixel, check whether perturbing it
+        together with the already irrelevant pixels by at most epsilon can change the prediction:
+        if it cannot ('unsat'), the pixel is irrelevant; if it can ('sat'), the pixel joins the
+        explanation and the counterexample found is its counterfactual. A pixel whose check
+        times out is kept in the explanation, so the result stays sound but may not be minimal.
         :param epsilon: the perturbation magnitude.
         :param plot_explanation: if True, plot the explanation.
         :param plot_counterfactual: if True, plot the counterfactual(s).
         :param plot_timeout: if True, plot the timeout pixel(s).
-        :return: an explanation, and possible counterfactual(s).
+        :return: None; the explanation is left in self.sat_set, the irrelevant pixels in
+                 self.unsat_set, and the timeout pixels in self.timeout_set.
         """
         unsat_set = []
         sat_set = []
@@ -178,7 +210,9 @@ class VeriX:
                         print("Dataset not supported: try 'MNIST' or 'GTSRB'.")
             for j in range(len(self.outputVars)):
                 """
-                Set constraints on the output variables.
+                Set constraints on the output variables: assert that some other class j scores
+                at least 1e-6 above the predicted label, i.e., a discrepancy of 0 in the paper,
+                with the 1e-6 making the inequality strict.
                 """
                 if j != self.label:
                     self.mara_model.addInequality([self.outputVars[self.label], self.outputVars[j]],
@@ -209,40 +243,90 @@ class VeriX:
             elif exit_code == 'sat':
                 sat_set.append(pixel)
                 if plot_counterfactual:
-                    counterfactual = [vals.get(i) for i in self.mara_model.inputVars[0].flatten()]
-                    counterfactual = np.asarray(counterfactual).reshape(self.image.shape)
-                    prediction = [vals.get(i) for i in self.outputVars]
-                    prediction = np.asarray(prediction).argmax()
-                    save_figure(image=counterfactual,
-                                path="counterfactual-at-pixel-%d-predicted-as-%d.png" % (pixel, prediction),
-                                cmap="gray" if self.dataset == 'MNIST' else None)
+                    self.plot_counterfactual(vals=vals, pixel=pixel)
+        self.unsat_set = unsat_set
+        self.sat_set = sat_set
+        self.timeout_set = timeout_set
         if plot_explanation:
-            mask = np.zeros(self.inputVars.shape).astype(bool)
-            mask[sat_set] = True
-            mask[timeout_set] = True
-            plot_shape = self.image.shape[0:2] if self.dataset == "MNIST" else self.image.shape
-            save_figure(image=label2rgb(mask.reshape(self.image.shape[0:2]),
-                                        self.image.reshape(plot_shape),
-                                        colors=[[0, 1, 0]] if self.traverse == 'heuristic' else [[1, 0, 0]],
-                                        bg_label=0,
-                                        saturation=1),
-                        path="explanation-%d.png" % (len(sat_set) + len(timeout_set)))
+            self.plot_explanation()
         if plot_timeout:
-            mask = np.zeros(self.inputVars.shape).astype(bool)
-            mask[timeout_set] = True
-            plot_shape = self.image.shape[0:2] if self.dataset == "MNIST" else self.image.shape
-            save_figure(image=label2rgb(mask.reshape(self.image.shape[0:2]),
-                                        self.image.reshape(plot_shape),
-                                        colors=[[0, 1, 0]] if self.traverse == 'heuristic' else [[1, 0, 0]],
-                                        bg_label=0,
-                                        saturation=1),
-                        path="timeout-%d.png" % len(timeout_set))
+            self.plot_timeout()
+
+    def plot_original(self):
+        """
+        To plot the original image, named by the label it is predicted as
+        (mapped through self.labels when available).
+        :return: an image saved to the designated path.
+        """
+        predicted = self.labels[self.label] if self.labels is not None else self.label
+        save_figure(image=self.image,
+                    path=os.path.join(self.directory, f"original-predicted-as-{predicted}.png"),
+                    cmap="gray" if self.dataset == 'MNIST' else None)
+
+    def plot_counterfactual(
+            self,
+            vals,
+            pixel,
+    ):
+        """
+        To plot the counterfactual found at the given pixel, named by that pixel and by the
+        label the counterfactual is predicted as. As there is one counterfactual per pixel in
+        the explanation, they are collected in a 'counterfactuals' sub-folder of self.directory.
+        :param vals: the variable assignment of the 'sat' Marabou query.
+        :param pixel: the pixel at which the counterfactual is found.
+        :return: an image saved to the designated path.
+        """
+        counterfactual = [vals.get(i) for i in self.mara_model.inputVars[0].flatten()]
+        counterfactual = np.asarray(counterfactual).reshape(self.image.shape)
+        prediction = [vals.get(i) for i in self.outputVars]
+        prediction = np.asarray(prediction).argmax()
+        predicted = self.labels[prediction] if self.labels is not None else prediction
+        directory = os.path.join(self.directory, "counterfactuals")
+        os.makedirs(directory, exist_ok=True)
+        save_figure(image=counterfactual,
+                    path=os.path.join(directory,
+                                      "counterfactual-at-pixel-%d-predicted-as-%s.png" % (pixel, predicted)),
+                    cmap="gray" if self.dataset == 'MNIST' else None)
+
+    def plot_explanation(self):
+        """
+        To plot the explanation by overlaying the explanatory pixels (the sat and the timeout
+        pixels) on the original image: green if traversed by 'heuristic', red if by 'random'.
+        :return: an image saved to the designated path.
+        """
+        mask = np.zeros(self.inputVars.shape).astype(bool)
+        mask[self.sat_set] = True
+        mask[self.timeout_set] = True
+        plot_shape = self.image.shape[0:2] if self.dataset == "MNIST" else self.image.shape
+        save_figure(image=label2rgb(mask.reshape(self.image.shape[0:2]),
+                                    self.image.reshape(plot_shape),
+                                    colors=[[0, 1, 0]] if self.traverse == 'heuristic' else [[1, 0, 0]],
+                                    bg_label=0,
+                                    saturation=1),
+                    path=os.path.join(self.directory,
+                                      "explanation-%d.png" % (len(self.sat_set) + len(self.timeout_set))))
+
+    def plot_timeout(self):
+        """
+        To plot the timeout pixels by overlaying them on the original image:
+        green if traversed by 'heuristic', red if by 'random'.
+        :return: an image saved to the designated path.
+        """
+        mask = np.zeros(self.inputVars.shape).astype(bool)
+        mask[self.timeout_set] = True
+        plot_shape = self.image.shape[0:2] if self.dataset == "MNIST" else self.image.shape
+        save_figure(image=label2rgb(mask.reshape(self.image.shape[0:2]),
+                                    self.image.reshape(plot_shape),
+                                    colors=[[0, 1, 0]] if self.traverse == 'heuristic' else [[1, 0, 0]],
+                                    bg_label=0,
+                                    saturation=1),
+                    path=os.path.join(self.directory, "timeout-%d.png" % len(self.timeout_set)))
 
 
 def save_figure(image, path, cmap=None):
     """
     To plot figures.
-    :param image: the image array of shape (width, height, channel)
+    :param image: the array to plot, of shape (width, height) or (width, height, channel).
     :param path: figure name.
     :param cmap: 'gray' if to plot gray scale image.
     :return: an image saved to the designated path.
